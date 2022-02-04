@@ -1,9 +1,6 @@
-const Flutterwave = require('flutterwave-node-v3');
 // const axios = require('axios');
 const bcrypt = require('bcrypt');
-const mailchimp = require('@mailchimp/mailchimp_marketing');
 const { Op } = require('sequelize');
-const random = require('randomstring');
 const { validationResult } = require('express-validator');
 const models = require('../models/index');
 const config = require('../config');
@@ -11,10 +8,8 @@ const { signJWT, verifyJWT } = require('../Utils/auth-token');
 const { sendEmail } = require('../Utils/email');
 
 const User = models.user;
-const Admin = models.admin;
-const Subscription = models.subscription;
-const monnifyAccount = models.monnify_accounts;
-const Referrals = models.referrals;
+const userBank = models.user_bank;
+const virtualAccount = models.virtual_accounts;
 
 exports.login = async (req, res) => {
   const { email, password } = req.body;
@@ -43,23 +38,20 @@ exports.login = async (req, res) => {
       firstname: user.firstname,
       lastname: user.lastname,
     });
-    const monnify = await monnifyAccount.findOne({ where: { user_id: user.id, bank_name: 'Wema bank' } });
+    const virtualAccount = await virtualAccount.findOne({ where: { user_id: user.id } });
     let bankData = {};
-    if (monnify) {
+    if (virtualAccount) {
+      const { account_number, account_name, bank_name } = virtualAccount;
       bankData = {
-        accountNumber: monnify.account_number,
-        accountName: monnify.account_name,
-        bankName: monnify.bank_name,
+        accountNumber: account_number,
+        accountName: account_name,
+        bankName: bank_name,
       };
-    }
-
-    const checkSub = await this.checkSubscription(user.id);
+    } 
     const retData = {
-      checkSubscription: checkSub,
       message: 'Login Successful',
       token,
       bank: bankData,
-      riskAppetite: user.risk_appetite,
     };
     return res.status(200).json(retData);
   } catch (error) {
@@ -68,20 +60,10 @@ exports.login = async (req, res) => {
   }
 };
 
-exports.generateReferralCode = async (req, res) => {
-  const users = await User.findAll();
-  // console.log(users);
-  users.forEach(async (user) => {
-    const referralCode = Math.random().toString(36).replace(/[^a-z]+/g, '').substr(0, 8);
-    await User.update({ referral_code: referralCode }, { where: { id: user.id } });
-  });
-  res.status(200).json({ message: 'Completed' });
-};
 exports.register = async (req, res) => {
   const {
     firstname, lastname, email, password, phone, inviteCode,
   } = req.body;
-  console.log(req.body);
 
   try {
     const errors = validationResult(req);
@@ -92,22 +74,16 @@ exports.register = async (req, res) => {
     if (!user) {
       const salt = await bcrypt.genSalt(10);
       const hashedPassword = bcrypt.hashSync(password, salt);
-      const referralCode = Math.random().toString(36).replace(/[^a-z]+/g, '').substr(0, 8);
       const newUser = {
         firstname,
         lastname,
         email,
         password: hashedPassword,
-        phone,
-        active: '1',
-        cooperative: '0',
-        referral_code: referralCode,
+        phone
       };
       try {
         const createdUser = await User.create(newUser);
-        if (inviteCode) {
-          await this.addReferral(createdUser.id, inviteCode);
-        }
+        this.createVirtualAccount(createdUser);
         const token = signJWT({
           email: newUser.email,
           id: createdUser.id,
@@ -128,33 +104,24 @@ exports.register = async (req, res) => {
   }
 };
 
-exports.addReferral = async (userId, referralCode) => {
-  // Cjeck user with the referral Code
-  const user = await User.findOne({ where: { referral_code: referralCode } });
-  if (!user) {
-    return '';
-  }
-  const referralData = {
-    referrer_id: user.id,
-    referred_id: userId,
-    referral_code: referralCode,
-  };
-  console.log(referralData);
-  await Referrals.create(referralData);
-  return '';
-};
-
-exports.updateProfile = async (req, res) => {
-  const { earning, riskAppetite, preferredChannel } = req.body;
-  const data = { risk_appetite: riskAppetite, earning, preferred_channel: preferredChannel };
+exports.addBank = async (req, res) => {
+  const { accountName, accountNumber, bankName } = req.body;
   const user = req.decoded.id;
 
-  const updateUser = await User.update(data, { where: { id: user } });
-
-  if (!updateUser) {
-    return res.status(400).json({ status: 'error', message: 'Update Not successful' });
+  const bankDetails = await userBank.findOne({where: { user_id: id } });
+  const bankData = {
+    account_name: accountName,
+    account_number: accountNumber,
+    bank_name: bankName
   }
-  return res.status(200).json({ status: 'success', message: 'User Updated' });
+  if (bankDetails) {
+    await userBank.update(bankData, { where: { user_id: user } });
+  } else {
+    bankDetails.user_id = user;
+    await userBank.create(bankDetails);
+
+  }
+  return res.status(200).json({ status: 'success', message: 'User Bank Added Successfully' });
 };
 
 exports.forgot = async (req, res) => {
@@ -216,7 +183,7 @@ exports.createVirtualAccount = async (user) => {
       return { status: 'error' };
     }
     const acc = res.data;
-    await exports.updateUserAccount(
+    await exports.saveVirtualAccount(
       user.id, acc.account_number, acc.order_ref, acc.flw_ref, acc.bank_name, transRef,
     );
     return { status: 'success', data: res.data };
@@ -225,48 +192,18 @@ exports.createVirtualAccount = async (user) => {
   }
 };
 
-exports.updateUserAccount = async (id, accountNumber, flwOrderRef, flwRef, bankName, transRef) => {
+exports.saveVirtualAccount = async (id, accountNumber, accountName, accountRef, bankName) => {
   const user = await User.findByPk(id);
   if (!user) {
     return { status: 'error', error: user, message: 'User does not exists' };
   }
   const data = {
+    user_id: id,
     accountNumber,
-    flwOrderRef,
-    flwRef,
+    accountName,
+    accountRef,
     bankName,
-    trans_ref: transRef,
   };
-  const message = await User.update(data, { where: { id } });
+  const message = await virtualAccount.create(data);
   return { status: 'success', message };
-};
-
-exports.testVirtual = async (req, res) => {
-  try {
-    const users = await User.findAll({ where: { account_number: { [Op.eq]: null } } });
-    // eslint-disable-next-line no-restricted-syntax
-    for (const user of users) {
-      // eslint-disable-next-line no-await-in-loop
-      await exports.createVirtualAccount(user);
-    }
-    return res.status(200).json({ users });
-  } catch (error) {
-    return { status: 'error', message: 'An Error Occoured', err: error };
-  }
-};
-
-exports.getVirtualAccount = async (orderRef) => {
-  try {
-    const flw = new Flutterwave(config.flutterwave_public, config.flutterwave_secret);
-    const payload = {
-      order_ref: orderRef,
-    };
-    const res = await flw.VirtualAcct.fetch(payload);
-    if (res.status !== 'success') {
-      return { status: 'error' };
-    }
-    return { status: 'success', data: res.data };
-  } catch (error) {
-    return { status: 'error', message: 'An Error Occoured', err: error };
-  }
 };

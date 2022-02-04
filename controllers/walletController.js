@@ -1,36 +1,107 @@
 const axios = require('axios');
 const crypto = require('crypto');
-const Flutterwave = require('flutterwave-node-v3');
 const config = require('../config');
 const { sendEmail } = require('../Utils/email');
 
 const models = require('../models/index');
 
+const fundTransfer = models.fund_transfer;
 const Wallet = models.wallet;
+const virtualAccount = models.virtual_accounts;
+const userBank = models.user_bank;
 const User = models.user;
 
-exports.fundWallet = async (req, res) => {
+exports.getWallet = async (req, res) => {
   const { id } = req.decoded;
-  const { amount, paymentRef } = req.body;
+
+  const { balance } = await exports.walletBalance(id);
+  const history = await Wallet.findAll({ where: { user_id: id } });
+
+  return res.status(200).json({ balance, history });
+}
+
+exports.walletBalance = async (id) => {
   try {
     const user = await User.findOne({ where: { id } });
     if (!user) {
       return res.status(401).json({ status: 'error', error: user, message: 'User not found' });
     }
 
-    const walletData = {
-      user_id: id,
-      amount,
-      payment_ref: paymentRef,
-      payment_platform: 'paystack',
-      description: 'Wallet Funding',
-    };
-    await Wallet.create(walletData);
-    return res.status(200).json({ message: 'Account Funded' });
+    const totalBal = await Wallet.findAll({
+      where: { user_id: id },
+      attributes: ['user_id', [sequelize.fn('sum', sequelize.col('amount')), 'total']],
+      raw: true,
+      group: ['user_id'],
+    });
+
+    let balance = 0;
+    if (totalBal.length > 0) {
+      balance = totalBal[0].total;
+    }
+
+    return { balance };
+
+  } catch (error) {
+    return res.status(500).json({ status: 'error', message: 'An Error Occoured', err: error });
+  }
+}
+
+exports.sendFunds = async (req, res) => {
+  const { id } = req.decoded;
+  const { amount, email } = req.body;
+  try {
+    const { balance } = await exports.walletBalance(id);
+
+    if (amount > balance) {
+      return res.status(400).json({ message: 'Insufficient wallet balance' });
+    }
+
+    const beneficiary = await User.findOne({ where: { email } });
+    if (!beneficiary) {
+      return res.status(400).json({ message: 'Beneficiary not found' });
+    }
+
+    const transferData = [
+      {
+        user_id: id,
+        amount: `-${amount}`,
+        payment_ref: paymentRef,
+        payment_platform: 'paystack',
+        description: 'Wallet Funding',
+      }, 
+      {
+        user_id: beneficiary.id,
+        amount,
+        payment_ref: paymentRef,
+        payment_platform: 'paystack',
+        description: 'Wallet Funding',
+      }
+    ];
+
+    await fundTransfer.bulkCreate(transferData);
+    return res.status(200).json({ message: 'Funds transfer Successful' });
   } catch (error) {
     return res.status(500).json({ status: 'error', message: 'An Error Occoured', err: error });
   }
 };
+
+exports.withdrawFunds = async (req, res) => {
+  const { id } = req.decoded;
+  const { amount } = req.body;
+  try {
+    const { balance } = exports.walletBalance(id);
+    if (amount > balance) {
+      return res.status(400).json({ message: 'Insufficient wallet balance' });
+    }
+
+    const userbank = await userBank.findOne({ where: { id } });
+    await exports.paystackTransfer(amount, userbank.transfer_rcp);
+
+    return res.status(200).json({ message: 'Withdrawal Successful' });
+  } catch (error) {
+    return res.status(500).json({ status: 'error', message: 'An Error Occoured', err: error });
+  }
+}
 
 exports.flutterwaveWebhook = async (req, res) => {
   const { data } = req.body;
@@ -39,7 +110,7 @@ exports.flutterwaveWebhook = async (req, res) => {
 
   if (hash === secretHash) {
     // Get user id with orderRef returned
-    const user = await User.findOne({ where: { trans_ref: data.tx_ref } });
+    const user = await virtualAccount.findOne({ where: { transaction_ref: data.tx_ref } });
     if (user) {
       const walletData = {
         user_id: user.id,
@@ -59,6 +130,9 @@ exports.initializePaystack = async (req, res) => {
   const { email, amount } = req.body;
   // Get User Id with email
   const user = await User.findOne({ where: { email } });
+  if (!user) {
+    return res.status(401).json({ status: 'error', error: user, message: 'User not found' });
+  }
   const initData = {
     email,
     amount,
@@ -97,24 +171,6 @@ exports.paystackWebhook = async (req, res) => {
   return res.sendStatus(200);
 };
 
-exports.monnifyWebhook = async (req, res) => {
-  const data = req.body;
-
-  const { customer } = data;
-  // Get user id with orderRef returned
-  const user = await User.findOne({ where: { email: customer.email } });
-  if (user) {
-    const walletData = {
-      user_id: user.id,
-      amount: Number(data.amountPaid),
-      payment_ref: data.transactionReference,
-      description: 'Wallet Funding',
-      payment_platform: 'Monnify',
-    };
-    await Wallet.create(walletData);
-  }
-  return res.sendStatus(200);
-};
 exports.flutterwaveTransfer = async (bank, accountNumber, amount) => {
   const flw = new Flutterwave(config.flutterwave_public, config.flutterwave_secret);
   try {

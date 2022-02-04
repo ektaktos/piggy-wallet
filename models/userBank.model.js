@@ -16,6 +16,10 @@ module.exports = (sequelize, DataTypes) => {
       type: DataTypes.STRING,
       allowNull: true,
     },
+    transfer_rcp: {
+      type: DataTypes.STRING,
+      allowNull: true,
+    }
   }, {
     paranoid: true,
     underscored: true,

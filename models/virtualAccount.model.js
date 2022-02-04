@@ -1,5 +1,5 @@
 module.exports = (sequelize, DataTypes) => {
-  const monnifyAccount = sequelize.define('virtual_account', {
+  const virtualAccount = sequelize.define('virtual_accounts', {
     user_id: {
       type: DataTypes.INTEGER,
       allowNull: false,
@@ -20,9 +20,16 @@ module.exports = (sequelize, DataTypes) => {
       type: DataTypes.STRING,
       allowNull: true,
     },
+    transaction_ref: {
+      type: DataTypes.STRING,
+      allowNull: true,
+    },
   }, {
     paranoid: true,
     underscored: true,
   });
+  virtualAccount.associate = (model) => {
+    virtualAccount.belongsTo(model.user, { foreign_key: 'user_id' });
+  };
   return virtualAccount;
 };

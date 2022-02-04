@@ -39,6 +39,8 @@ module.exports = (sequelize, DataTypes) => {
   User.associate = (model) => {
     User.hasOne(model.user_bank);
     User.hasMany(model.wallet);
+    User.hasMany(model.virtual_accounts);
+    User.hasMany(model.funds_transfer);
   };
 
   return User;
