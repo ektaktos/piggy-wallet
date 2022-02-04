@@ -28,8 +28,8 @@ module.exports = (sequelize, DataTypes) => {
     paranoid: true,
     underscored: true,
   });
-  virtualAccount.associate = (model) => {
-    virtualAccount.belongsTo(model.user, { foreign_key: 'user_id' });
-  };
+  // virtualAccount.associate = (model) => {
+  //   virtualAccount.belongsTo(model.user, { foreign_key: 'user_id' });
+  // };
   return virtualAccount;
 };

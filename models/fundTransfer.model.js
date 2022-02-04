@@ -20,10 +20,6 @@ module.exports = (sequelize, DataTypes) => {
       paranoid: true,
       underscored: true,
     });
-    fundsTransfer.associate = (model) => {
-        fundsTransfer.belongsTo(model.user, { as: 'senderData' }, { foreign_key: 'sender'});
-        fundsTransfer.belongsTo(model.user, { as: 'beneficiaryData' }, { foreign_key: 'beneficiary'});
-    };
     return fundsTransfer;
   };
   

@@ -16,7 +16,7 @@ exports.sendEmail = async (data) => {
   });
 
   const mailOptions = {
-    from: 'Smart Stewards<support@smartstewards.com>',
+    from: '',
     to: data.email,
     subject: data.subject,
     html: data.message,

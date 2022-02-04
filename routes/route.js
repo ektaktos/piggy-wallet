@@ -25,6 +25,9 @@ router.post('/bank/add', verifyToken, authController.addBank);
 
 router.get('/wallet', verifyToken, walletController.getWallet);
 
+// Generate Virtual bank account with bvn
+router.post('/bvn/add', verifyToken, authController.addBvn);
+
 // Sending Funds to anotehr user using their email
 router.post('/funds/transfer', verifyToken, walletController.sendFunds);
 

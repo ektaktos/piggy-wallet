@@ -1,6 +1,6 @@
-// const axios = require('axios');
+const Flutterwave = require('flutterwave-node-v3');
 const bcrypt = require('bcrypt');
-const { Op } = require('sequelize');
+const random = require('randomstring');
 const { validationResult } = require('express-validator');
 const models = require('../models/index');
 const config = require('../config');
@@ -83,7 +83,6 @@ exports.register = async (req, res) => {
       };
       try {
         const createdUser = await User.create(newUser);
-        this.createVirtualAccount(createdUser);
         const token = signJWT({
           email: newUser.email,
           id: createdUser.id,
@@ -138,7 +137,7 @@ exports.forgot = async (req, res) => {
   const data = {
     email,
     subject: 'Reset your password',
-    message: `You have requested to reset your password with smart stewards, click the link below to reset your password <br> ${url}`,
+    message: `You have requested to reset your password with us, click the link below to reset your password <br> ${url}`,
   };
   await sendEmail(data);
   return res.status(200).json({ status: 'success', message: 'Check your email for password reset link' });
@@ -166,6 +165,36 @@ exports.reset = async (req, res) => {
   }
 };
 
+exports.addBvn = async (req, res) => {
+  const { bvn } = req.body;
+  const { id } = req.decoded;
+  const data = await exports.verifyBvn(bvn);
+  if (!data.status) {
+    return res.status(400).json({ status: 'error', message: 'Invalid BVN' });
+  }
+  try {
+    const user = await User.findOne({ where: { id } });
+    user.bvn = bvn;
+    await exports.createVirtualAccount(user);
+    await User.update({ bvn }, { where: { id } });
+    return res.json({ message: 'User BVN added', bank, reserve });
+  } catch (error) {
+    console.log(error);
+    return res.status(500).json({ error });
+  }
+};
+
+exports.verifyBvn = async (bvn) => {
+  try {
+    const url = `https://api.paystack.co/identity/bvn/resolve/${bvn}`;
+    const data = await axios.get(url, { headers: { Authorization: `Bearer ${config.paystack_secret}` } });
+    return data;
+  } catch (error) {
+    const data = { status: false };
+    return data;
+  }
+};
+
 exports.createVirtualAccount = async (user) => {
   try {
     const flw = new Flutterwave(config.flutterwave_public, config.flutterwave_secret);
@@ -179,6 +208,7 @@ exports.createVirtualAccount = async (user) => {
       tx_ref: transRef,
     };
     const res = await flw.VirtualAcct.create(payload);
+    console.log(res);
     if (res.status !== 'success') {
       return { status: 'error' };
     }
